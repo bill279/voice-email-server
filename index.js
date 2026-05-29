@@ -21,7 +21,7 @@ app.post('/chat', async (req, res) => {
   try {
     const { messages, system } = req.body;
     const today = new Date().toLocaleDateString('en-US', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
-    const systemPrompt = system || `You are Bilmedia AI, a smart personal assistant for Stewart at bilmedia. Today's date is ${today}. Use web search for current events, news, weather, sports, prices. Be concise and natural — keep responses under 3 sentences for voice. Never use markdown. Write in clean plain prose for speaking aloud. You have full email sending capability — when the user asks you to send or email something, confirm you are sending it and that it will arrive shortly.`;
+    const systemPrompt = system || `You are Bilmedia AI, a smart personal assistant for Stewart at bilmedia. Today's date is ${today}. Use web search for current events, news, weather, sports, prices. Write well-structured responses like a knowledgeable assistant. Use clear paragraphs and complete thoughts. No markdown symbols — no asterisks, bullets, or headers. Just clean flowing prose. You have full email sending capability. When the user asks to send or email something, confirm you are sending it.`;
 
     let currentMessages = [...messages];
     let finalReply = '';
@@ -42,7 +42,7 @@ app.post('/chat', async (req, res) => {
             'anthropic-version': '2023-06-01',
             'content-type': 'application/json'
           },
-          timeout: 30000
+          timeout: 60000
         }
       );
 
@@ -70,11 +70,10 @@ app.post('/chat', async (req, res) => {
 
     if (!finalReply) finalReply = 'I was unable to get a complete answer. Please try again.';
 
-    // Detect email intent from user's last message — inject [SHOW_EMAIL] tag automatically
+    // Detect email intent — inject [SHOW_EMAIL] tag automatically
     const lastUserMsg = (messages[messages.length - 1]?.content || '').toLowerCase();
-    const hasEmailWord = /email|send|mail/.test(lastUserMsg);
-    const hasTarget = /\bme\b|\bit\b|\bthat\b|\bthis\b|summary|result/.test(lastUserMsg);
-    if (hasEmailWord && hasTarget && !finalReply.includes('[SHOW_EMAIL]')) {
+    const emailIntent = /\b(email|send|mail)\b/.test(lastUserMsg);
+    if (emailIntent && !finalReply.includes('[SHOW_EMAIL]')) {
       finalReply = finalReply + '\n[SHOW_EMAIL]';
     }
 
@@ -83,6 +82,38 @@ app.post('/chat', async (req, res) => {
   } catch (err) {
     console.error(err.response?.data || err.message);
     res.status(500).json({ error: err.response?.data?.error?.message || err.message });
+  }
+});
+
+// Generate proper email subject + body from conversation
+app.post('/generate-email', async (req, res) => {
+  try {
+    const { messages } = req.body;
+    const claudeRes = await axios.post(
+      'https://api.anthropic.com/v1/messages',
+      {
+        model: 'claude-sonnet-4-5',
+        max_tokens: 1000,
+        system: 'You are an email writing assistant. Generate a professional email based on the conversation. Respond with ONLY valid JSON: {"subject": "...", "body": "..."}. No markdown, no extra text, just the JSON.',
+        messages: [
+          ...messages,
+          { role: 'user', content: 'Write a professional email based on our conversation. Return only JSON with subject and body.' }
+        ]
+      },
+      {
+        headers: {
+          'x-api-key': ANTHROPIC_KEY,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json'
+        }
+      }
+    );
+    const text = claudeRes.data.content[0].text.trim().replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(text);
+    res.json({ subject: parsed.subject, body: parsed.body });
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -149,36 +180,3 @@ app.post('/email', upload.single('attachment'), async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Bilmedia AI Server listening on port ${PORT}`));
-
-// Generate a proper email subject + body from conversation context
-app.post('/generate-email', async (req, res) => {
-  try {
-    const { messages } = req.body;
-    const claudeRes = await axios.post(
-      'https://api.anthropic.com/v1/messages',
-      {
-        model: 'claude-sonnet-4-5',
-        max_tokens: 1000,
-        system: 'You are an email writing assistant. Based on the conversation, generate a professional email. Respond with ONLY valid JSON in this exact format: {"subject": "...", "body": "..."}. No markdown, no extra text.',
-        messages: [
-          ...messages,
-          { role: 'user', content: 'Write a professional email summarizing the key information from our conversation. Return only JSON with subject and body fields.' }
-        ]
-      },
-      {
-        headers: {
-          'x-api-key': ANTHROPIC_KEY,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json'
-        }
-      }
-    );
-    const text = claudeRes.data.content[0].text.trim();
-    const clean = text.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(clean);
-    res.json({ subject: parsed.subject, body: parsed.body });
-  } catch (err) {
-    console.error(err.response?.data || err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
