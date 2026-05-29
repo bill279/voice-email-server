@@ -23,27 +23,64 @@ app.post('/chat', async (req, res) => {
     const today = new Date().toLocaleDateString('en-US', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
     const systemPrompt = system || `You are Bilmedia AI, a smart personal assistant for Stewart at bilmedia. Today's date is ${today}. You have access to real-time web search — use it whenever asked about current events, news, prices, weather, sports, or anything requiring up-to-date info. Be concise and natural. If the user asks to email, send, or mail something, end your reply with exactly: [SHOW_EMAIL]. Only include [SHOW_EMAIL] if explicitly asked.`;
 
-    const claudeRes = await axios.post(
-      'https://api.anthropic.com/v1/messages',
-      {
-        model: 'claude-sonnet-4-5',
-        max_tokens: 2000,
-        system: systemPrompt,
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        messages
-      },
-      {
-        headers: {
-          'x-api-key': ANTHROPIC_KEY,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json'
-        }
-      }
-    );
+    const tools = [{ type: 'web_search_20250305', name: 'web_search' }];
+    let currentMessages = [...messages];
+    let finalReply = '';
 
-    const textBlock = claudeRes.data.content.find(b => b.type === 'text');
-    const reply = textBlock ? textBlock.text : 'I searched but could not find a clear answer.';
-    res.json({ reply });
+    // Agentic loop — keep going until Claude stops using tools
+    for (let i = 0; i < 5; i++) {
+      const claudeRes = await axios.post(
+        'https://api.anthropic.com/v1/messages',
+        {
+          model: 'claude-sonnet-4-5',
+          max_tokens: 2000,
+          system: systemPrompt,
+          tools,
+          messages: currentMessages
+        },
+        {
+          headers: {
+            'x-api-key': ANTHROPIC_KEY,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json'
+          }
+        }
+      );
+
+      const { content, stop_reason } = claudeRes.data;
+
+      // If Claude is done, extract text and break
+      if (stop_reason === 'end_turn') {
+        const textBlock = content.find(b => b.type === 'text');
+        finalReply = textBlock ? textBlock.text : 'Done.';
+        break;
+      }
+
+      // If Claude used tools, add assistant message and tool results to messages
+      if (stop_reason === 'tool_use') {
+        currentMessages.push({ role: 'assistant', content });
+
+        // Build tool results
+        const toolResults = content
+          .filter(b => b.type === 'tool_use')
+          .map(b => ({
+            type: 'tool_result',
+            tool_use_id: b.id,
+            content: b.input ? JSON.stringify(b.input) : 'Search completed.'
+          }));
+
+        currentMessages.push({ role: 'user', content: toolResults });
+      } else {
+        // Unexpected stop reason — just grab text if any
+        const textBlock = content.find(b => b.type === 'text');
+        finalReply = textBlock ? textBlock.text : 'I was unable to complete that request.';
+        break;
+      }
+    }
+
+    if (!finalReply) finalReply = 'I was unable to complete that request.';
+    res.json({ reply: finalReply });
+
   } catch (err) {
     console.error(err.response?.data || err.message);
     res.status(500).json({ error: err.response?.data?.error?.message || err.message });
