@@ -29,6 +29,7 @@ async function webSearch(query) {
       max_results: 5,
       include_answer: true
     }, {
+      timeout: 10000,
       headers: {
         'Authorization': 'Bearer ' + TAVILY_KEY,
         'Content-Type': 'application/json'
