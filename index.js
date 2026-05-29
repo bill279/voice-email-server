@@ -1,4 +1,3 @@
-
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -22,7 +21,7 @@ app.post('/chat', async (req, res) => {
   try {
     const { messages, system } = req.body;
     const today = new Date().toLocaleDateString('en-US', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
-    const systemPrompt = system || `You are Bilmedia AI, a smart personal assistant for Stewart at bilmedia. Today's date is ${today}. Use web search for current events, news, weather, sports, prices. Be concise and natural — keep responses under 3 sentences for voice. Never use markdown. Write in clean plain prose for speaking aloud.`;
+    const systemPrompt = system || `You are Bilmedia AI, a smart personal assistant for Stewart at bilmedia. Today's date is ${today}. Use web search for current events, news, weather, sports, prices. Be concise and natural — keep responses under 3 sentences for voice. Never use markdown. Write in clean plain prose for speaking aloud. You have full email sending capability — when the user asks you to send or email something, confirm you are sending it and that it will arrive shortly.`;
 
     let currentMessages = [...messages];
     let finalReply = '';
