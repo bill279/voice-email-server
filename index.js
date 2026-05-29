@@ -21,7 +21,7 @@ app.post('/chat', async (req, res) => {
   try {
     const { messages, system } = req.body;
     const today = new Date().toLocaleDateString('en-US', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
-    const systemPrompt = system || `You are Bilmedia AI, a smart personal assistant for Stewart at bilmedia. Today's date is ${today}. Use web search for current events, news, weather, sports, prices. Be concise and natural. If the user asks to email/send/mail something, end your reply with exactly: [SHOW_EMAIL].`;
+    const systemPrompt = system || `You are Bilmedia AI, a smart personal assistant for Stewart at bilmedia. Today's date is ${today}. Use web search for current events, news, weather, sports, prices. Be concise and natural. Never use markdown formatting — no asterisks, no bullet points, no headers, no dashes. Write in clean plain prose like you are speaking out loud. IMPORTANT: You CAN send emails — you have full email capability via SendGrid. When the user says anything like 'send it', 'email me that', 'send that to me', 'email it' — you MUST end your reply with exactly [SHOW_EMAIL] and confirm you are sending it. Never tell the user you cannot send emails. If the user asks to email/send/mail something, end your reply with exactly: [SHOW_EMAIL].`;
 
     let currentMessages = [...messages];
     let finalReply = '';
