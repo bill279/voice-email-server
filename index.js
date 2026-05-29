@@ -236,4 +236,3 @@ app.post('/email', upload.single('attachment'), async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, function() { console.log('Bilmedia AI Server listening on port ' + PORT); });
-
