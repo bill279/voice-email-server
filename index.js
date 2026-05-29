@@ -38,9 +38,12 @@ async function webSearch(query) {
     let out = '';
     if (d.answer) out += 'Answer: ' + d.answer + '\n\n';
     if (d.results) out += d.results.slice(0, 4).map(r => '[' + r.title + ']\n' + r.content).join('\n\n');
+    console.log('Tavily returned:', out.substring(0, 300));
     return out || 'No results found.';
   } catch(e) {
-    return 'Search failed: ' + e.message;
+    const detail = e.response ? JSON.stringify(e.response.data) : e.message;
+    console.error('Tavily error:', detail);
+    return 'Search error: ' + detail;
   }
 }
 
@@ -53,7 +56,7 @@ app.post('/chat', async (req, res) => {
       hour: '2-digit', minute: '2-digit'
     });
 
-    const systemPrompt = system || 'You are Bilmedia AI, a smart personal assistant for Stewart at Bilmedia in Edmonton, Alberta. The current date and time is ' + now + '.\n\nYou have real-time web search — use it for anything current: news, weather, sports, prices, events, schedules. Be conversational, direct, and helpful. Format responses with clear paragraphs, no unnecessary filler.\n\nIf the user asks to email or send something to someone, end your reply with exactly: [SHOW_EMAIL]. If the user names a recipient without an email address, ask for their email first before including [SHOW_EMAIL].';
+    const systemPrompt = system || 'You are Bilmedia AI, a smart personal assistant for Stewart at Bilmedia in Edmonton, Alberta. The current date and time is ' + now + '.\n\nYou have real-time web search — use it for anything current: news, weather, sports, prices, events, schedules. ALWAYS use the search results to answer. Never say you cannot access the web — just summarize what the search returns. Be conversational, direct, and helpful. Format responses with clear paragraphs.\n\nIf the user asks to email or send something to someone, end your reply with exactly: [SHOW_EMAIL]. If the user names a recipient without an email address, ask for their email first before including [SHOW_EMAIL].';
 
     const tools = [{
       name: 'web_search',
