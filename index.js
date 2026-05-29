@@ -149,3 +149,36 @@ app.post('/email', upload.single('attachment'), async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Bilmedia AI Server listening on port ${PORT}`));
+
+// Generate a proper email subject + body from conversation context
+app.post('/generate-email', async (req, res) => {
+  try {
+    const { messages } = req.body;
+    const claudeRes = await axios.post(
+      'https://api.anthropic.com/v1/messages',
+      {
+        model: 'claude-sonnet-4-5',
+        max_tokens: 1000,
+        system: 'You are an email writing assistant. Based on the conversation, generate a professional email. Respond with ONLY valid JSON in this exact format: {"subject": "...", "body": "..."}. No markdown, no extra text.',
+        messages: [
+          ...messages,
+          { role: 'user', content: 'Write a professional email summarizing the key information from our conversation. Return only JSON with subject and body fields.' }
+        ]
+      },
+      {
+        headers: {
+          'x-api-key': ANTHROPIC_KEY,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json'
+        }
+      }
+    );
+    const text = claudeRes.data.content[0].text.trim();
+    const clean = text.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+    res.json({ subject: parsed.subject, body: parsed.body });
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
