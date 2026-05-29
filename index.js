@@ -1,3 +1,4 @@
+
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -21,13 +22,12 @@ app.post('/chat', async (req, res) => {
   try {
     const { messages, system } = req.body;
     const today = new Date().toLocaleDateString('en-US', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
-    const systemPrompt = system || `You are Bilmedia AI, a smart personal assistant for Stewart at bilmedia. Today's date is ${today}. Use web search for current events, news, weather, sports, prices. Be concise and natural — keep responses under 3 sentences when possible for voice. Never use markdown. Write in clean plain prose for speaking aloud. You CAN send emails. When the user asks to email or send something, confirm you are sending it and put [SHOW_EMAIL] at the very end of your reply.`;
+    const systemPrompt = system || `You are Bilmedia AI, a smart personal assistant for Stewart at bilmedia. Today's date is ${today}. Use web search for current events, news, weather, sports, prices. Be concise and natural — keep responses under 3 sentences for voice. Never use markdown. Write in clean plain prose for speaking aloud.`;
 
     let currentMessages = [...messages];
     let finalReply = '';
-    const maxIterations = 8;
 
-    for (let i = 0; i < maxIterations; i++) {
+    for (let i = 0; i < 8; i++) {
       const claudeRes = await axios.post(
         'https://api.anthropic.com/v1/messages',
         {
@@ -50,35 +50,35 @@ app.post('/chat', async (req, res) => {
       const { content, stop_reason } = claudeRes.data;
 
       if (stop_reason === 'end_turn') {
-        // Collect ALL text blocks
         const textBlocks = content.filter(b => b.type === 'text').map(b => b.text);
         finalReply = textBlocks.join('\n').trim();
         break;
       }
 
       if (stop_reason === 'tool_use') {
-        // Add assistant's response to history
         currentMessages.push({ role: 'assistant', content });
-
-        // Build tool results for all tool_use blocks
-        const toolUseBlocks = content.filter(b => b.type === 'tool_use');
-        const toolResults = toolUseBlocks.map(b => ({
-          type: 'tool_result',
-          tool_use_id: b.id,
-          content: 'Search completed successfully.'
-        }));
-
+        const toolResults = content
+          .filter(b => b.type === 'tool_use')
+          .map(b => ({ type: 'tool_result', tool_use_id: b.id, content: 'Search completed.' }));
         currentMessages.push({ role: 'user', content: toolResults });
         continue;
       }
 
-      // Any other stop reason — grab text if available
       const textBlocks = content.filter(b => b.type === 'text').map(b => b.text);
       finalReply = textBlocks.join('\n').trim() || 'Unable to complete request.';
       break;
     }
 
     if (!finalReply) finalReply = 'I was unable to get a complete answer. Please try again.';
+
+    // Detect email intent from user's last message — inject [SHOW_EMAIL] tag automatically
+    const lastUserMsg = (messages[messages.length - 1]?.content || '').toLowerCase();
+    const hasEmailWord = /email|send|mail/.test(lastUserMsg);
+    const hasTarget = /\bme\b|\bit\b|\bthat\b|\bthis\b|summary|result/.test(lastUserMsg);
+    if (hasEmailWord && hasTarget && !finalReply.includes('[SHOW_EMAIL]')) {
+      finalReply = finalReply + '\n[SHOW_EMAIL]';
+    }
+
     res.json({ reply: finalReply });
 
   } catch (err) {
