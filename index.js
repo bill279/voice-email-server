@@ -20,7 +20,6 @@ const USER_EMAIL = process.env.USER_EMAIL || FROM_EMAIL;
 app.get('/', (req, res) => res.json({ status: 'Bilmedia AI Server running' }));
 app.get('/config', (req, res) => res.json({ userEmail: USER_EMAIL }));
 
-// — Web search via Tavily
 async function webSearch(query) {
   if (!TAVILY_KEY) return 'No search API key configured (TAVILY_API_KEY).';
   try {
@@ -41,7 +40,6 @@ async function webSearch(query) {
   }
 }
 
-// — Chat with tool use (web search)
 app.post('/chat', async (req, res) => {
   try {
     const { messages, system } = req.body;
@@ -72,7 +70,6 @@ If the user asks to email or send something to someone, end your reply with exac
     let currentMessages = [...messages];
     let finalText = '';
 
-    // Agentic loop — Claude can search up to 5 times per response
     for (let i = 0; i < 5; i++) {
       const claudeRes = await axios.post(
         'https://api.anthropic.com/v1/messages',
@@ -100,18 +97,26 @@ If the user asks to email or send something to someone, end your reply with exac
       }
 
       if (data.stop_reason === 'tool_use') {
-        const toolBlock = data.content.find(b => b.type === 'tool_use');
-        if (!toolBlock) { finalText = data.content.find(b => b.type === 'text')?.text || ''; break; }
+        const toolBlocks = data.content.filter(b => b.type === 'tool_use');
+        if (!toolBlocks.length) { finalText = data.content.find(b => b.type === 'text')?.text || ''; break; }
 
-        console.log('Searching:', toolBlock.input.query);
-        const searchResult = await webSearch(toolBlock.input.query);
+        const searchResults = await Promise.all(
+          toolBlocks.map(tb => {
+            console.log('Searching:', tb.input.query);
+            return webSearch(tb.input.query);
+          })
+        );
 
         currentMessages = [
           ...currentMessages,
           { role: 'assistant', content: data.content },
           {
             role: 'user',
-            content: [{ type: 'tool_result', tool_use_id: toolBlock.id, content: searchResult }]
+            content: toolBlocks.map((tb, i) => ({
+              type: 'tool_result',
+              tool_use_id: tb.id,
+              content: searchResults[i]
+            }))
           }
         ];
       } else {
@@ -127,7 +132,6 @@ If the user asks to email or send something to someone, end your reply with exac
   }
 });
 
-// — Generate email subject + body
 app.post('/generate-email', async (req, res) => {
   try {
     const { messages } = req.body;
@@ -161,7 +165,6 @@ app.post('/generate-email', async (req, res) => {
   }
 });
 
-// — Transcribe via Whisper
 app.post('/transcribe', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No audio file' });
@@ -179,7 +182,6 @@ app.post('/transcribe', upload.single('audio'), async (req, res) => {
   }
 });
 
-// — TTS via OpenAI
 app.post('/speak', async (req, res) => {
   try {
     const { text, voice } = req.body;
@@ -196,9 +198,41 @@ app.post('/speak', async (req, res) => {
   }
 });
 
-// — Send email via SendGrid
 app.post('/email', upload.single('attachment'), async (req, res) => {
   try {
+    const { to, subject, body } = req.body;
+    if (!to || !body) return res.status(400).json({ error: 'to and body required' });
+
+    const sgPayload = {
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: FROM_EMAIL, name: FROM_NAME },
+      subject: subject || 'Bilmedia AI — Your results',
+      content: [{ type: 'text/plain', value: body }]
+    };
+
+    if (req.file) {
+      sgPayload.attachments = [{
+        content: req.file.buffer.toString('base64'),
+        filename: req.file.originalname,
+        type: req.file.mimetype || 'application/octet-stream',
+        disposition: 'attachment'
+      }];
+    }
+
+    await axios.post('https://api.sendgrid.com/v3/mail/send', sgPayload, {
+      headers: { 'Authorization': `Bearer ${SENDGRID_KEY}`, 'Content-Type': 'application/json' }
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Bilmedia AI Server listening on port ${PORT}`));
+{
     const { to, subject, body } = req.body;
     if (!to || !body) return res.status(400).json({ error: 'to and body required' });
 
