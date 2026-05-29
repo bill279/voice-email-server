@@ -25,7 +25,7 @@ app.post('/chat', async (req, res) => {
     const claudeRes = await axios.post(
       'https://api.anthropic.com/v1/messages',
       {
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-5',
         max_tokens: 1000,
         system: system || 'You are Bilmedia AI, a smart personal assistant for Stewart at bilmedia. Be concise and natural. If the user asks to email, send, or mail something, end your reply with exactly: [SHOW_EMAIL]. Only include [SHOW_EMAIL] if explicitly asked.',
         messages
