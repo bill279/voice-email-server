@@ -24,11 +24,15 @@ async function webSearch(query) {
   if (!TAVILY_KEY) return 'No search API key configured.';
   try {
     const res = await axios.post('https://api.tavily.com/search', {
-      api_key: TAVILY_KEY,
       query,
       search_depth: 'basic',
       max_results: 5,
       include_answer: true
+    }, {
+      headers: {
+        'Authorization': 'Bearer ' + TAVILY_KEY,
+        'Content-Type': 'application/json'
+      }
     });
     const d = res.data;
     let out = '';
@@ -88,20 +92,19 @@ app.post('/chat', async (req, res) => {
       const data = claudeRes.data;
 
       if (data.stop_reason === 'end_turn') {
-        finalText = data.content.find(function(b) { return b.type === 'text'; }) ? data.content.find(function(b) { return b.type === 'text'; }).text : '';
+        finalText = data.content.find(b => b.type === 'text') ? data.content.find(b => b.type === 'text').text : '';
         break;
       }
 
       if (data.stop_reason === 'tool_use') {
-        const toolBlocks = data.content.filter(function(b) { return b.type === 'tool_use'; });
+        const toolBlocks = data.content.filter(b => b.type === 'tool_use');
         if (!toolBlocks.length) {
-          var tb = data.content.find(function(b) { return b.type === 'text'; });
-          finalText = tb ? tb.text : '';
+          finalText = data.content.find(b => b.type === 'text') ? data.content.find(b => b.type === 'text').text : '';
           break;
         }
 
         const searchResults = await Promise.all(
-          toolBlocks.map(function(tb) {
+          toolBlocks.map(tb => {
             console.log('Searching:', tb.input.query);
             return webSearch(tb.input.query);
           })
@@ -111,14 +114,15 @@ app.post('/chat', async (req, res) => {
           { role: 'assistant', content: data.content },
           {
             role: 'user',
-            content: toolBlocks.map(function(tb, i) {
-              return { type: 'tool_result', tool_use_id: tb.id, content: searchResults[i] };
-            })
+            content: toolBlocks.map((tb, idx) => ({
+              type: 'tool_result',
+              tool_use_id: tb.id,
+              content: searchResults[idx]
+            }))
           }
         ]);
       } else {
-        var tb2 = data.content.find(function(b) { return b.type === 'text'; });
-        finalText = tb2 ? tb2.text : '';
+        finalText = data.content.find(b => b.type === 'text') ? data.content.find(b => b.type === 'text').text : '';
         break;
       }
     }
@@ -229,3 +233,4 @@ app.post('/email', upload.single('attachment'), async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, function() { console.log('Bilmedia AI Server listening on port ' + PORT); });
+
