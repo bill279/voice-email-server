@@ -15,19 +15,21 @@ const OPENAI_KEY = process.env.OPENAI_API_KEY;
 const FROM_EMAIL = process.env.FROM_EMAIL || 'stewart@bilmedia.ca';
 const FROM_NAME = process.env.FROM_NAME || 'Bilmedia AI';
 
-// Health check
 app.get('/', (req, res) => res.json({ status: 'Bilmedia AI Server running' }));
 
-// — Chat endpoint — proxies Claude API
 app.post('/chat', async (req, res) => {
   try {
     const { messages, system } = req.body;
+    const today = new Date().toLocaleDateString('en-US', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
+    const systemPrompt = system || `You are Bilmedia AI, a smart personal assistant for Stewart at bilmedia. Today's date is ${today}. You have access to real-time web search — use it whenever asked about current events, news, prices, weather, sports, or anything requiring up-to-date info. Be concise and natural. If the user asks to email, send, or mail something, end your reply with exactly: [SHOW_EMAIL]. Only include [SHOW_EMAIL] if explicitly asked.`;
+
     const claudeRes = await axios.post(
       'https://api.anthropic.com/v1/messages',
       {
         model: 'claude-sonnet-4-5',
-        max_tokens: 1000,
-        system: system || 'You are Bilmedia AI, a smart personal assistant for Stewart at bilmedia. Be concise and natural. If the user asks to email, send, or mail something, end your reply with exactly: [SHOW_EMAIL]. Only include [SHOW_EMAIL] if explicitly asked.',
+        max_tokens: 2000,
+        system: systemPrompt,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
         messages
       },
       {
@@ -38,23 +40,23 @@ app.post('/chat', async (req, res) => {
         }
       }
     );
-    res.json({ reply: claudeRes.data.content[0].text });
+
+    const textBlock = claudeRes.data.content.find(b => b.type === 'text');
+    const reply = textBlock ? textBlock.text : 'I searched but could not find a clear answer.';
+    res.json({ reply });
   } catch (err) {
     console.error(err.response?.data || err.message);
     res.status(500).json({ error: err.response?.data?.error?.message || err.message });
   }
 });
 
-// — Transcribe endpoint — proxies Whisper
 app.post('/transcribe', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No audio file' });
-
     const FormData = require('form-data');
     const fd = new FormData();
     fd.append('file', req.file.buffer, { filename: 'audio.webm', contentType: req.file.mimetype });
     fd.append('model', 'whisper-1');
-
     const whisperRes = await axios.post('https://api.openai.com/v1/audio/transcriptions', fd, {
       headers: { ...fd.getHeaders(), 'Authorization': 'Bearer ' + OPENAI_KEY }
     });
@@ -65,7 +67,6 @@ app.post('/transcribe', upload.single('audio'), async (req, res) => {
   }
 });
 
-// — TTS endpoint — proxies OpenAI TTS
 app.post('/speak', async (req, res) => {
   try {
     const { text, voice } = req.body;
@@ -82,19 +83,16 @@ app.post('/speak', async (req, res) => {
   }
 });
 
-// — Email endpoint
 app.post('/email', upload.single('attachment'), async (req, res) => {
   try {
     const { to, subject, body } = req.body;
     if (!to || !body) return res.status(400).json({ error: 'to and body required' });
-
     const sgPayload = {
       personalizations: [{ to: [{ email: to }] }],
       from: { email: FROM_EMAIL, name: FROM_NAME },
       subject: subject || 'Bilmedia AI — Your results',
       content: [{ type: 'text/plain', value: body }]
     };
-
     if (req.file) {
       sgPayload.attachments = [{
         content: req.file.buffer.toString('base64'),
@@ -103,11 +101,9 @@ app.post('/email', upload.single('attachment'), async (req, res) => {
         disposition: 'attachment'
       }];
     }
-
     await axios.post('https://api.sendgrid.com/v3/mail/send', sgPayload, {
       headers: { 'Authorization': `Bearer ${SENDGRID_KEY}`, 'Content-Type': 'application/json' }
     });
-
     res.json({ success: true });
   } catch (err) {
     console.error(err.response?.data || err.message);
