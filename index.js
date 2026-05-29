@@ -12,7 +12,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 const SENDGRID_KEY = process.env.SENDGRID_API_KEY;
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
-const TAVILY_KEY = process.env.TAVILY_API_KEY;
+const SERPER_KEY = process.env.SERPER_API_KEY;
 const FROM_EMAIL = process.env.FROM_EMAIL || 'stewart@bilmedia.ca';
 const FROM_NAME = process.env.FROM_NAME || 'Bilmedia AI';
 const USER_EMAIL = process.env.USER_EMAIL || FROM_EMAIL;
@@ -21,29 +21,27 @@ app.get('/', (req, res) => res.json({ status: 'Bilmedia AI Server running' }));
 app.get('/config', (req, res) => res.json({ userEmail: USER_EMAIL }));
 
 async function webSearch(query) {
-  if (!TAVILY_KEY) return 'No search API key configured.';
+  if (!SERPER_KEY) return 'No search API key configured.';
   try {
-    const res = await axios.post('https://api.tavily.com/search', {
-      query,
-      search_depth: 'basic',
-      max_results: 5,
-      include_answer: true
+    const res = await axios.post('https://google.serper.dev/search', {
+      q: query,
+      num: 5
     }, {
-      timeout: 10000,
+      timeout: 8000,
       headers: {
-        'Authorization': 'Bearer ' + TAVILY_KEY,
+        'X-API-KEY': SERPER_KEY,
         'Content-Type': 'application/json'
       }
     });
     const d = res.data;
     let out = '';
-    if (d.answer) out += 'Answer: ' + d.answer + '\n\n';
-    if (d.results) out += d.results.slice(0, 4).map(r => '[' + r.title + ']\n' + r.content).join('\n\n');
-    console.log('Tavily returned:', out.substring(0, 300));
+    if (d.answerBox) out += 'Answer: ' + (d.answerBox.answer || d.answerBox.snippet || '') + '\n\n';
+    if (d.organic) out += d.organic.slice(0, 4).map(r => '[' + r.title + ']\n' + r.snippet).join('\n\n');
+    console.log('Search returned:', out.substring(0, 300));
     return out || 'No results found.';
   } catch(e) {
     const detail = e.response ? JSON.stringify(e.response.data) : e.message;
-    console.error('Tavily error:', detail);
+    console.error('Search error:', detail);
     return 'Search error: ' + detail;
   }
 }
