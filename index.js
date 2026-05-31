@@ -12,74 +12,28 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 const SENDGRID_KEY = process.env.SENDGRID_API_KEY;
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
-const SERPER_KEY = process.env.SERPER_API_KEY;
 const FROM_EMAIL = process.env.FROM_EMAIL || 'stewart@bilmedia.ca';
 const FROM_NAME = process.env.FROM_NAME || 'Bilmedia AI';
-const USER_EMAIL = process.env.USER_EMAIL || FROM_EMAIL;
 
 app.get('/', (req, res) => res.json({ status: 'Bilmedia AI Server running' }));
-app.get('/config', (req, res) => res.json({ userEmail: USER_EMAIL }));
-
-async function webSearch(query) {
-  if (!SERPER_KEY) return 'No search API key configured.';
-  try {
-    const res = await axios.post('https://google.serper.dev/search', {
-      q: query,
-      num: 5
-    }, {
-      timeout: 8000,
-      headers: {
-        'X-API-KEY': SERPER_KEY,
-        'Content-Type': 'application/json'
-      }
-    });
-    const d = res.data;
-    let out = '';
-    if (d.answerBox) out += 'Answer: ' + (d.answerBox.answer || d.answerBox.snippet || '') + '\n\n';
-    if (d.organic) out += d.organic.slice(0, 4).map(r => '[' + r.title + ']\n' + r.snippet).join('\n\n');
-    console.log('Search returned:', out.substring(0, 300));
-    return out || 'No results found.';
-  } catch(e) {
-    const detail = e.response ? JSON.stringify(e.response.data) : e.message;
-    console.error('Search error:', detail);
-    return 'Search error: ' + detail;
-  }
-}
 
 app.post('/chat', async (req, res) => {
   try {
     const { messages, system } = req.body;
-    const now = new Date().toLocaleString('en-CA', {
-      timeZone: 'America/Edmonton',
-      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-      hour: '2-digit', minute: '2-digit'
-    });
-
-    const systemPrompt = system || 'You are Bilmedia AI, a smart personal assistant for Stewart at Bilmedia in Edmonton, Alberta. The current date and time is ' + now + '.\n\nYou have real-time web search — use it for anything current: news, weather, sports, prices, events, schedules. ALWAYS use the search results to answer. Never say you cannot access the web — just summarize what the search returns. Be conversational, direct, and helpful. Format responses with clear paragraphs.\n\nIf the user asks to email or send something to someone, end your reply with exactly: [SHOW_EMAIL]. If the user names a recipient without an email address, ask for their email first before including [SHOW_EMAIL].';
-
-    const tools = [{
-      name: 'web_search',
-      description: 'Search the web for real-time or current information — news, weather, sports, events, prices, anything recent.',
-      input_schema: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'Search query' }
-        },
-        required: ['query']
-      }
-    }];
+    const today = new Date().toLocaleDateString('en-US', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
+    const systemPrompt = system || `You are Bilmedia AI, a smart personal assistant for Stewart at bilmedia. Today's date is ${today}. Use web search for current events, news, weather, sports, prices. Write well-structured responses like a knowledgeable assistant. Use clear paragraphs and complete thoughts. No markdown symbols — no asterisks, bullets, or headers. Just clean flowing prose. You have full email sending capability. When the user asks to send or email something, confirm you are sending it.`;
 
     let currentMessages = [...messages];
-    let finalText = '';
+    let finalReply = '';
 
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 8; i++) {
       const claudeRes = await axios.post(
         'https://api.anthropic.com/v1/messages',
         {
-          model: 'claude-sonnet-4-6',
-          max_tokens: 1500,
+          model: 'claude-sonnet-4-5',
+          max_tokens: 2000,
           system: systemPrompt,
-          tools: tools,
+          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
           messages: currentMessages
         },
         {
@@ -87,67 +41,64 @@ app.post('/chat', async (req, res) => {
             'x-api-key': ANTHROPIC_KEY,
             'anthropic-version': '2023-06-01',
             'content-type': 'application/json'
-          }
+          },
+          timeout: 60000
         }
       );
 
-      const data = claudeRes.data;
+      const { content, stop_reason } = claudeRes.data;
 
-      if (data.stop_reason === 'end_turn') {
-        finalText = data.content.find(b => b.type === 'text') ? data.content.find(b => b.type === 'text').text : '';
+      if (stop_reason === 'end_turn') {
+        const textBlocks = content.filter(b => b.type === 'text').map(b => b.text);
+        finalReply = textBlocks.join('\n').trim();
         break;
       }
 
-      if (data.stop_reason === 'tool_use') {
-        const toolBlocks = data.content.filter(b => b.type === 'tool_use');
-        if (!toolBlocks.length) {
-          finalText = data.content.find(b => b.type === 'text') ? data.content.find(b => b.type === 'text').text : '';
-          break;
-        }
-
-        const searchResults = await Promise.all(
-          toolBlocks.map(tb => {
-            console.log('Searching:', tb.input.query);
-            return webSearch(tb.input.query);
-          })
-        );
-
-        currentMessages = currentMessages.concat([
-          { role: 'assistant', content: data.content },
-          {
-            role: 'user',
-            content: toolBlocks.map((tb, idx) => ({
-              type: 'tool_result',
-              tool_use_id: tb.id,
-              content: searchResults[idx]
-            }))
-          }
-        ]);
-      } else {
-        finalText = data.content.find(b => b.type === 'text') ? data.content.find(b => b.type === 'text').text : '';
-        break;
+      if (stop_reason === 'tool_use') {
+        currentMessages.push({ role: 'assistant', content });
+        const toolResults = content
+          .filter(b => b.type === 'tool_use')
+          .map(b => ({ type: 'tool_result', tool_use_id: b.id, content: 'Search completed.' }));
+        currentMessages.push({ role: 'user', content: toolResults });
+        continue;
       }
+
+      const textBlocks = content.filter(b => b.type === 'text').map(b => b.text);
+      finalReply = textBlocks.join('\n').trim() || 'Unable to complete request.';
+      break;
     }
 
-    res.json({ reply: finalText });
+    if (!finalReply) finalReply = 'I was unable to get a complete answer. Please try again.';
+
+    // Detect email intent — inject [SHOW_EMAIL] tag automatically
+    const lastUserMsg = (messages[messages.length - 1]?.content || '').toLowerCase();
+    const emailIntent = /\b(email|send|mail)\b/.test(lastUserMsg);
+    if (emailIntent && !finalReply.includes('[SHOW_EMAIL]')) {
+      finalReply = finalReply + '\n[SHOW_EMAIL]';
+    }
+
+    res.json({ reply: finalReply });
+
   } catch (err) {
-    console.error(err.response ? err.response.data : err.message);
-    res.status(500).json({ error: err.response ? err.response.data.error.message : err.message });
+    console.error(err.response?.data || err.message);
+    res.status(500).json({ error: err.response?.data?.error?.message || err.message });
   }
 });
 
+// Generate proper email subject + body from conversation
 app.post('/generate-email', async (req, res) => {
   try {
     const { messages } = req.body;
     const claudeRes = await axios.post(
       'https://api.anthropic.com/v1/messages',
       {
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 500,
-        system: 'Generate a professional email based on the conversation. Return ONLY valid JSON with "subject" and "body" fields. No markdown, no explanation.',
-        messages: (messages || []).concat([
-          { role: 'user', content: 'Write an email based on our conversation. Return JSON only: {"subject": "...", "body": "..."}' }
-        ])
+        model: 'claude-sonnet-4-5',
+        max_tokens: 1000,
+        system: 'You are an email writing assistant. Generate a professional email based on the conversation. Respond with ONLY valid JSON: {"subject": "...", "body": "..."}. No markdown, no extra text, just the JSON.',
+        messages: [
+          ...messages,
+          { role: 'user', content: 'Write a professional email based on our conversation. Return only JSON with subject and body.' }
+        ]
       },
       {
         headers: {
@@ -157,13 +108,11 @@ app.post('/generate-email', async (req, res) => {
         }
       }
     );
-    const text = claudeRes.data.content[0].text;
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('No JSON in response');
-    const parsed = JSON.parse(match[0]);
-    res.json({ subject: parsed.subject || '', body: parsed.body || '' });
+    const text = claudeRes.data.content[0].text.trim().replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(text);
+    res.json({ subject: parsed.subject, body: parsed.body });
   } catch (err) {
-    console.error(err.response ? err.response.data : err.message);
+    console.error(err.response?.data || err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -176,11 +125,11 @@ app.post('/transcribe', upload.single('audio'), async (req, res) => {
     fd.append('file', req.file.buffer, { filename: 'audio.webm', contentType: req.file.mimetype });
     fd.append('model', 'whisper-1');
     const whisperRes = await axios.post('https://api.openai.com/v1/audio/transcriptions', fd, {
-      headers: Object.assign({}, fd.getHeaders(), { 'Authorization': 'Bearer ' + OPENAI_KEY })
+      headers: { ...fd.getHeaders(), 'Authorization': 'Bearer ' + OPENAI_KEY }
     });
     res.json({ text: whisperRes.data.text });
   } catch (err) {
-    console.error(err.response ? err.response.data : err.message);
+    console.error(err.response?.data || err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -190,13 +139,13 @@ app.post('/speak', async (req, res) => {
     const { text, voice } = req.body;
     const ttsRes = await axios.post(
       'https://api.openai.com/v1/audio/speech',
-      { model: 'tts-1', input: text.substring(0, 800), voice: voice || 'alloy' },
+      { model: 'tts-1', input: text.substring(0, 4000), voice: voice || 'alloy' },
       { headers: { 'Authorization': 'Bearer ' + OPENAI_KEY, 'Content-Type': 'application/json' }, responseType: 'arraybuffer' }
     );
     res.set('Content-Type', 'audio/mpeg');
     res.send(Buffer.from(ttsRes.data));
   } catch (err) {
-    console.error(err.response ? err.response.data : err.message);
+    console.error(err.response?.data || err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -205,14 +154,12 @@ app.post('/email', upload.single('attachment'), async (req, res) => {
   try {
     const { to, subject, body } = req.body;
     if (!to || !body) return res.status(400).json({ error: 'to and body required' });
-
     const sgPayload = {
       personalizations: [{ to: [{ email: to }] }],
       from: { email: FROM_EMAIL, name: FROM_NAME },
       subject: subject || 'Bilmedia AI — Your results',
       content: [{ type: 'text/plain', value: body }]
     };
-
     if (req.file) {
       sgPayload.attachments = [{
         content: req.file.buffer.toString('base64'),
@@ -221,18 +168,15 @@ app.post('/email', upload.single('attachment'), async (req, res) => {
         disposition: 'attachment'
       }];
     }
-
     await axios.post('https://api.sendgrid.com/v3/mail/send', sgPayload, {
-      headers: { 'Authorization': 'Bearer ' + SENDGRID_KEY, 'Content-Type': 'application/json' }
+      headers: { 'Authorization': `Bearer ${SENDGRID_KEY}`, 'Content-Type': 'application/json' }
     });
-
     res.json({ success: true });
   } catch (err) {
-    console.error(err.response ? err.response.data : err.message);
+    console.error(err.response?.data || err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, function() { console.log('Bilmedia AI Server listening on port ' + PORT); });
-
+app.listen(PORT, () => console.log(`Bilmedia AI Server listening on port ${PORT}`));
